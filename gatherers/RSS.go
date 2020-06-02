@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
-	"unicode"
-
-	"github.com/covid19-bot/covid19-bot/utils"
+	"github.com/jinzhu/gorm"
+	"github.com/razuos/covid19-bot/db"
+	"github.com/razuos/covid19-bot/models"
+	"github.com/razuos/covid19-bot/utils"
 	"github.com/ungerik/go-rss"
-	"golang.org/x/text/transform"
-	"golang.org/x/text/unicode/norm"
 )
 
-func NewChannel(url string) (rss.Channel, error) {
+func newChannel(url string) (rss.Channel, error) {
 	resp, err := rss.Read(url, false)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -23,25 +23,13 @@ func NewChannel(url string) (rss.Channel, error) {
 	return *channel, err
 }
 
-func isMn(r rune) bool {
-	return unicode.Is(unicode.Mn, r) // Mn: nonspacing marks
-}
-
-func processString(str string) string {
-	transformer := transform.Chain(norm.NFD, transform.RemoveFunc(isMn), norm.NFC)
-
-	result := strings.ToLower(str)
-	result, _, _ = transform.String(transformer, result)
-
-	return result
-}
-
-func GetEntriesFromChannel(channel rss.Channel) (results []rss.Item) {
+func getEntriesFromChannel(channel rss.Channel) (results []rss.Item) {
 	return channel.Item
 }
 
-func GetSameDayEntries(entries []rss.Item) (results []rss.Item) {
+func getSameDayEntries(entries []rss.Item) (results []rss.Item) {
 	log.Println("Getting RSS entries from same day")
+
 	localtime := time.Now().Local().Format("2006-01-02")
 	log.Printf("Local time: %s", localtime)
 
@@ -63,7 +51,7 @@ func GetSameDayEntries(entries []rss.Item) (results []rss.Item) {
 	return results
 }
 
-func HasAnyKeywords(str string) bool {
+func hasAnyKeywords(str string) bool {
 	keywords := []string{"covid", "coronavirus", "corona", "casos", "atualizacao", "pandemia"}
 	for _, keyword := range keywords {
 		if strings.Contains(str, keyword) {
@@ -73,16 +61,13 @@ func HasAnyKeywords(str string) bool {
 	return false
 }
 
-func FilterEntriesByRelevancy(entries []rss.Item) (results []rss.Item) {
+func filterEntriesByRelevancy(entries []rss.Item) (results []rss.Item) {
 
 	for _, item := range entries {
-		title := processString(item.Title)
-		body := processString(item.Description)
+		title := utils.RemoveSpecialChars(item.Title)
+		body := utils.RemoveSpecialChars(item.Description)
 
-		// log.Println("Item title: ", title)
-		// log.Println("Item body: ", body)
-
-		if HasAnyKeywords(title) || HasAnyKeywords(body) {
+		if hasAnyKeywords(title) || hasAnyKeywords(body) {
 			log.Println("Found Relevant Item: ", item.GUID)
 			results = append(results, item)
 		}
@@ -90,38 +75,72 @@ func FilterEntriesByRelevancy(entries []rss.Item) (results []rss.Item) {
 	return results
 }
 
-func GetFilteredEntries(channel rss.Channel) []rss.Item {
-	GetEntriesFromChannel(channel)
-	filtered := GetSameDayEntries(channel.Item)
-	filtered = FilterEntriesByRelevancy(filtered)
+func addDotToTitle(str string) string {
+	if string(str[len(str)-1:]) != "." {
+		return str + string(".")
+	}
+	return str
+}
+
+func getFilteredEntries(channel rss.Channel) []rss.Item {
+	getEntriesFromChannel(channel)
+	filtered := getSameDayEntries(channel.Item)
+	filtered = filterEntriesByRelevancy(filtered)
 	return filtered
 }
 
-func RSSGathererWorker(status chan<- string, clock *time.Ticker) {
-	log.Printf("Starting RSS Gathering Worker.")
-	quit := make(chan struct{})
-	var knownEntries []string
+func genUUID(url string) (result string) {
+	result = ""
+	str1 := utils.Reverse(url)
+	for _, char := range str1 {
+		if string(char) != "=" {
+			result = result + string(char)
+		} else {
+			return utils.Reverse(result)
+		}
+	}
+	return
+}
+
+func isEntryInDB(db *gorm.DB, uuid string) bool {
+	find := models.RSSData{}
+	if err := db.First(&find, "uuid = ?", uuid).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false
+		}
+		log.Fatalf("Error in isEntryInDB: %s", err.Error())
+	}
+	return true
+}
+
+// RSSWorker gathers informartion from a RSS feed and sends to the twitter worker.
+func RSSWorker(url string, wg *sync.WaitGroup, status chan<- string, clock *time.Ticker, done <-chan bool) {
+	db := db.Connect()
+	log.Printf("Starting RSS Gathering Worker on %s", url)
+
 	for {
 		select {
 		case <-clock.C:
 			log.Println("Updating RSS channel.")
-			log.Println("Known entries: ", knownEntries)
-			channel, _ := NewChannel("http://www.riogrande.rs.gov.br/corona/feed")
-			entries := GetFilteredEntries(channel)
-			log.Println("Updating RSS channel.")
+			channel, _ := newChannel(url)
+			entries := getFilteredEntries(channel)
 			for _, item := range entries {
-				if !utils.IsStringInSlice(item.GUID, knownEntries) {
-					log.Println("Adding new tweet to queue:", item.GUID)
-					knownEntries = append(knownEntries, item.GUID)
-					text := fmt.Sprintf("%s\r\rFonte: %s", item.Title, item.GUID)
+				uuid := genUUID(item.GUID)
+				if !isEntryInDB(db, uuid) {
+					title := addDotToTitle(item.Title)
+					time, _ := item.PubDate.Parse()
+					entryTime := time.Format("2006-01-02")
+					log.Printf("New tweet from UUID: %s\n", uuid)
+					text := fmt.Sprintf("%s\r\rFonte: %s", title, item.GUID)
 					status <- text
+					db.Create(&models.RSSData{UUID: uuid, Title: title, Source: item.GUID, PubDate: entryTime})
 				} else {
-					log.Println("Item already tweetted about:", item.GUID)
+					log.Printf("Ignoring UUID: %s", uuid)
 				}
 			}
-
-		case <-quit:
-			clock.Stop()
+		case <-done:
+			wg.Done()
+			db.Close()
 			return
 		}
 	}

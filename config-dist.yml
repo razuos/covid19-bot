@@ -1,0 +1,18 @@
+twitter:
+  ConsumerKey: MzZ4bEGfN0U8sWLe8Y0akHBDM
+  ConsumerSecret: cQB7JFth84eWkmZOl7y95YjwVOcVxZRB8iZJgyDlDFXcz2Wwev
+  AccessToken: 1264772651136045056-7WyZXuxCzFPAsrFDMdPPk6ua5TF67g 
+  AccessTokenSecret: VJSR7AQi4NoltMgA0eBYrsUD90s7j9Xa0v543cfKflP90 
+  TweetIntervalMinutes: 68
+  Lat: -32.0332
+  Long: -52.0986
+
+db:
+  Host:
+  Port:
+  User:
+  Pass:
+  Name:
+
+gathering:
+  UpdateIntervalMinutes: 20

@@ -2,22 +2,21 @@ package twitter
 
 import (
 	"log"
-	"os"
-	"strconv"
+	"sync"
 	"time"
 
 	twitter "github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+	"github.com/razuos/covid19-bot/config"
 )
 
-func NewTwitter() (*twitter.Client, twitter.User) {
-	consumerKey := os.Getenv("CONSUMER_KEY")
-	consumerSecret := os.Getenv("CONSUMER_SECRET")
-	accessSecret := os.Getenv("ACCESS_SECRET")
-	accessToken := os.Getenv("ACCESS_TOKEN")
-	if consumerKey == "" || consumerSecret == "" || accessSecret == "" || accessToken == "" {
-		log.Fatal("Fail to get env vars")
-	}
+func newTwitter() (*twitter.Client, twitter.User) {
+	config.Check([]string{"consumerkey", "consumersecret", "accesstoken", "accesstokensecret"})
+
+	consumerKey := config.AppConfig.Twitter.ConsumerKey
+	consumerSecret := config.AppConfig.Twitter.ConsumerSecret
+	accessToken := config.AppConfig.Twitter.AccessToken
+	accessSecret := config.AppConfig.Twitter.AccessTokenSecret
 
 	config := oauth1.NewConfig(consumerKey, consumerSecret)
 	token := oauth1.NewToken(accessToken, accessSecret)
@@ -31,35 +30,34 @@ func NewTwitter() (*twitter.Client, twitter.User) {
 	return client, *user
 }
 
-func UpdateStatus(client *twitter.Client, status string) {
-	lat, err := strconv.ParseFloat(os.Getenv("CITY_LAT"), 64)
-	long, err := strconv.ParseFloat(os.Getenv("CITY_LONG"), 64)
-
+func updateStatus(client *twitter.Client, status string) {
 	var params twitter.StatusUpdateParams
 
-	if err == nil {
+	if config.Check([]string{"lat", "long"}) {
 		params = twitter.StatusUpdateParams{
-			Lat:  &lat,
-			Long: &long,
+			Lat:  &config.AppConfig.Twitter.Lat,
+			Long: &config.AppConfig.Twitter.Long,
 		}
 	}
 
 	client.Statuses.Update(status, &params)
 }
 
-func TwitterWorker(status <-chan string, clock *time.Ticker) {
+// Worker is a worker function to listen for statuses and post them.
+func Worker(wg *sync.WaitGroup, status <-chan string, clock *time.Ticker, done <-chan bool) {
+	defer wg.Done()
 
-	quit := make(chan struct{})
-	client, user := NewTwitter()
+	client, user := newTwitter()
 	log.Printf("Starting Twitter Worker for user %s.", user.Name)
 	for {
 		select {
 		case <-clock.C:
+			log.Println("Waiting for status to tweet.")
 			text := <-status
 			log.Println("Tweeting.")
-			UpdateStatus(client, text)
-		case <-quit:
-			clock.Stop()
+			updateStatus(client, text)
+		case <-done:
+			wg.Done()
 			return
 		}
 	}

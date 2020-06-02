@@ -3,14 +3,13 @@ package utils
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/dghubble/oauth1"
 	twauth "github.com/dghubble/oauth1/twitter"
+	"github.com/razuos/covid19-bot/config"
 )
 
-var config oauth1.Config
-
+// IsStringInSlice checks if a string is in a slice.
 func IsStringInSlice(a string, list []string) bool {
 	for _, b := range list {
 		if b == a {
@@ -20,22 +19,14 @@ func IsStringInSlice(a string, list []string) bool {
 	return false
 }
 
-func CheckEnv(variables []string) {
-	for _, variable := range variables {
-		if os.Getenv(variable) == "" {
-			log.Fatal("Missing required environment variable: ", variable)
-		}
-	}
-}
-
+// StartAuthorizationFlow returns the api keys for twitter.
 func StartAuthorizationFlow() {
-	consumerKey := os.Getenv("CONSUMER_KEY")
-	consumerSecret := os.Getenv("CONSUMER_SECRET")
-	if consumerKey == "" || consumerSecret == "" {
-		log.Fatal("Env vars missing.")
-	}
+	config.Check([]string{"consumerkey, consumersecret"})
 
-	config = oauth1.Config{
+	consumerKey := config.AppConfig.Twitter.ConsumerKey
+	consumerSecret := config.AppConfig.Twitter.ConsumerSecret
+
+	config := oauth1.Config{
 		ConsumerKey:    consumerKey,
 		ConsumerSecret: consumerSecret,
 		Endpoint:       twauth.AuthorizeEndpoint,

@@ -1,5 +1,5 @@
-.env
-.env-docker
+config.yml
+data
 .DS_Store
 *.[56789ao]
 *.a[56789o]

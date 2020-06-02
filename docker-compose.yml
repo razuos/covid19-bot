@@ -1,0 +1,37 @@
+version: "2"
+
+services:
+  db:
+    container_name: db
+    image: postgres
+    environment:
+     - POSTGRES_PASSWORD=covid
+     - POSTGRES_USER=covid
+     - POSTGRES_DB=covid
+    volumes:
+     - ./data/db:/var/lib/postgresql/data
+    networks:
+      bot:
+
+  adminer:
+    depends_on: 
+      - db
+    image: adminer
+    restart: always
+    networks:
+      bot:
+    ports:
+      - 8081:8080
+
+  bot:
+    depends_on: 
+      - db
+    container_name: bot
+    image: covid19bot/bot
+    volumes:
+     - ./config.yml:/root/config.yml:ro
+    networks:
+      bot:
+
+networks:
+  bot:
